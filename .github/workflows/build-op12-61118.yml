@@ -446,10 +446,46 @@ jobs:
 
       - name: Setup Kotlin
         run: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+
           KOTLIN_VERSION="2.4.10"
-          curl -sL "https://github.com/JetBrains/kotlin/releases/download/v${KOTLIN_VERSION}/kotlin-compiler-${KOTLIN_VERSION}.zip" -o kotlinc.zip
-          unzip -q kotlinc.zip -d "$HOME"
-          echo "$HOME/kotlinc/bin" >> "$GITHUB_PATH"
+          KOTLIN_SHA256="473dd66c7a3ef4b182065b3da670466c1bf2773a9dbb0ed8b33a39fe9d4f876d"
+          kotlin_url="https://github.com/JetBrains/kotlin/releases/download/v${KOTLIN_VERSION}/kotlin-compiler-${KOTLIN_VERSION}.zip"
+          kotlin_tmp=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/op12-kotlin-download.XXXXXX")
+          trap 'rm -rf -- "$kotlin_tmp"' EXIT
+          kotlin_archive="$kotlin_tmp/kotlinc.zip"
+          kotlin_ready=false
+
+          for attempt in 1 2 3 4; do
+            echo "Downloading Kotlin ${KOTLIN_VERSION} (attempt ${attempt}/4)"
+            rm -f -- "$kotlin_archive"
+            if curl --fail --location --silent --show-error \
+                 --connect-timeout 20 --max-time 300 \
+                 --write-out 'HTTP %{http_code}; downloaded %{size_download} bytes\n' \
+                 --output "$kotlin_archive" "$kotlin_url" &&
+               printf '%s  %s\n' "$KOTLIN_SHA256" "$kotlin_archive" | sha256sum --check --status &&
+               unzip -tq "$kotlin_archive"; then
+              kotlin_ready=true
+              break
+            fi
+            echo "::warning::Kotlin download failed HTTP, SHA256 or ZIP validation (attempt ${attempt}/4)."
+            if [[ "$attempt" != 4 ]]; then
+              sleep 3
+            fi
+          done
+
+          if [[ "$kotlin_ready" != true ]]; then
+            echo "::error::Could not download a verified Kotlin ${KOTLIN_VERSION} archive after 4 attempts."
+            exit 1
+          fi
+
+          kotlin_install_dir="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/op12-kotlin-${KOTLIN_VERSION}"
+          mkdir -p "$kotlin_install_dir"
+          unzip -qo "$kotlin_archive" -d "$kotlin_install_dir"
+          "$kotlin_install_dir/kotlinc/bin/kotlinc" -version
+          "$kotlin_install_dir/kotlinc/bin/kotlin" -version
+          printf '%s\n' "$kotlin_install_dir/kotlinc/bin" >> "$GITHUB_PATH"
 
       - name: Setup Ccache-ECS
         run: |
