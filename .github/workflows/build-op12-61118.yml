@@ -87,7 +87,7 @@ on:
         type: string
         description: "回退SUSFS(输入哈希或次数或-1关闭)//Rollback SUSFS (Enter commit hash, count, or -1 to disable)"
         required: false
-        default: ""
+        default: "a2165b6f875b73e2f87d3c6f12814efac8de061d"
       DYNAMIC_REPO:
         type: string
         description: "动态清单仓库所有者//Manifest repository owner"
@@ -206,7 +206,7 @@ jobs:
           [[ "$SELECTED_FAST" == "true" ]] || { echo 'Keep FAST_BUILD enabled for this recipe'; exit 1; }
           [[ -z "$SELECTED_RESUBLEVEL" ]] || { echo 'Leave RESUBLEVEL empty; source version must be real'; exit 1; }
           [[ "$SELECTED_KPM" == "KPM" ]] || { echo 'Select KPM'; exit 1; }
-          [[ "$SELECTED_SUSFS" != "-1" ]] || { echo 'SUSFS must remain enabled'; exit 1; }
+          [[ "$SELECTED_SUSFS" == "a2165b6f875b73e2f87d3c6f12814efac8de061d" ]] || { echo 'Keep the pinned SUSFS_META value for this recipe'; exit 1; }
           [[ "$SELECTED_KSU" == "main/builtin/OP12-61118/1cfa57340590971cba7521ed536da8ebbedc5f0a" ]] || { echo 'Keep the pinned KSU_META value for this recipe'; exit 1; }
 
       - name: Maximize Build Space
@@ -1094,6 +1094,39 @@ jobs:
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' ./security/Kconfig
 
       # 配置信息，带*为附加项目，具有一定危险性和不确定性
+      - name: Complete SUSFS priority UID filter integration
+        run: |
+          python3 - <<'PY'
+          import re
+          import subprocess
+          from pathlib import Path
+
+          expected = 'a2165b6f875b73e2f87d3c6f12814efac8de061d'
+          actual = subprocess.check_output(['git', '-C', 'kernel_workspace/susfs4ksu', 'rev-parse', 'HEAD'], text=True).strip()
+          if actual != expected:
+              raise SystemExit(f'Unexpected SUSFS commit: {actual}')
+          base = Path('kernel_workspace/kernel_platform')
+          header = (base / 'common/include/linux/susfs.h').read_text()
+          implementation = (base / 'common/fs/susfs.c').read_text()
+          for name in ('susfs_parse_priority_app_strings', 'susfs_set_priority_uid_filter'):
+              if not re.search(r'void\s+' + name + r'\s*\(', header):
+                  raise SystemExit(f'SUSFS header is missing {name}')
+              if not re.search(r'void\s+' + name + r'\s*\(', implementation):
+                  raise SystemExit(f'SUSFS implementation is missing {name}')
+          symbol = 'KSU_SUSFS_PRIORITY_UID_FILTER'
+          kconfig = base / 'KernelSU/kernel/Kconfig'
+          source = kconfig.read_text()
+          if not re.search(r'^config\s+' + symbol + r'\s*$', source, re.M):
+              anchor = re.search(r'^config KSU_SUSFS_SUS_MAP\b', source, re.M)
+              if not anchor:
+                  raise SystemExit('Unexpected SukiSU Kconfig layout; inspect before patching')
+              source = source[:anchor.start()] + 'config KSU_SUSFS_PRIORITY_UID_FILTER\n    bool "SUSFS priority UID filter"\n    depends on KSU_SUSFS\n    default y\n\n' + source[anchor.start():]
+              kconfig.write_text(source)
+              print('Added SUSFS priority UID filter Kconfig symbol')
+          else:
+              print('SUSFS priority UID filter Kconfig symbol already exists')
+          PY
+
       - name: Add Configuration Settings
         run: |
           cd kernel_workspace/kernel_platform/common
@@ -1154,6 +1187,7 @@ jobs:
           # SUSFS配置
           if [ "${{ github.event.inputs.SUSFS_META }}" != "-1" ]; then
             set_config "CONFIG_KSU_SUSFS=y"
+            set_config "CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=y"
             set_config "CONFIG_KSU_SUSFS_SUS_PATH=y"
             set_config "CONFIG_KSU_SUSFS_SUS_MAP=y"
             set_config "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
@@ -1518,6 +1552,7 @@ jobs:
           fi
 
           make O=out "${MAKE_ARGS[@]}" olddefconfig --no-print-directory
+          grep -qx "CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=y" out/.config || { echo "SUSFS priority filter missing after olddefconfig"; exit 1; }
           make -j"$(nproc --all)" O=out "${MAKE_ARGS[@]}"
           ccache -s
 
@@ -1587,6 +1622,9 @@ jobs:
           actual_ksu=$(git -C kernel_workspace/kernel_platform/KernelSU rev-parse HEAD)
           [[ "$actual_ksu" == "1cfa57340590971cba7521ed536da8ebbedc5f0a" ]] || { echo "Wrong SukiSU commit: $actual_ksu"; exit 1; }
           printf '\nSukiSU builtin commit: %s\n' "$actual_ksu" >> SOURCE_LOCK_REPORT.txt
+          actual_susfs=$(git -C kernel_workspace/susfs4ksu rev-parse HEAD)
+          [[ "$actual_susfs" == "a2165b6f875b73e2f87d3c6f12814efac8de061d" ]] || { echo "Wrong SUSFS commit: $actual_susfs"; exit 1; }
+          printf 'SUSFS commit: %s\n' "$actual_susfs" >> SOURCE_LOCK_REPORT.txt
           python3 - <<'PY'
           #!/usr/bin/env python3
           """Inspect a final, uncompressed ARM64 Image; does not flash or execute it."""
@@ -1617,7 +1655,7 @@ jobs:
               start = data.find(b'IKCFG_ST', start + 8)
           if config is None:
               raise SystemExit('No readable embedded IKCONFIG; feature checks cannot pass')
-          required = ['CONFIG_KSU=y', 'CONFIG_KSU_SUSFS=y', 'CONFIG_KPM=y']
+          required = ['CONFIG_KSU=y', 'CONFIG_KSU_SUSFS=y', 'CONFIG_KPM=y', 'CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=y']
           for entry in required:
               if entry not in config.splitlines():
                   raise SystemExit(f'Missing actual kernel configuration: {entry}')
