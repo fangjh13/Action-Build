@@ -1,0 +1,42 @@
+{
+  "target_repository": "OnePlusOSS/android_kernel_common_oneplus_sm8650",
+  "target_commit": "8545ca9de03997a9411c35e9d15f2aeed4301710",
+  "target_version": "6.1.118",
+  "ack_base_commit": "52d02725a414897561db16ff950227b9322e671c",
+  "upstream": {
+    "repository": "realme-kernel-opensource/realme_GT5pro-AndroidV-common-source",
+    "hmbird_commit": "920a71d0f589dac6bd56898ae2261d593df08d97",
+    "comparison_commit": "802d968fb2c726f0a9dd88fed80a003d724769d4",
+    "version": "6.1.75",
+    "note": "Scheduler changes are backported onto the real OP12 6.1.118 source; the Makefile version is never changed."
+  },
+  "patch_sha256": "d857522d6439094b6a8c75bde31f06f89ea980fa035a06bd0065e79c0b397b71",
+  "reference_sha256": "a3b12a75da1630c13d87dfb041cefed21cd91ea5ca21f2dc23930b59b5ef1e9f",
+  "result_files": {
+    "arch/arm64/configs/gki_defconfig": "76608b3b63ed701b738db1ae0c6d561950799958c24456cdf92177aecd11acfb",
+    "include/linux/sched.h": "e685e45308691324d7cb486ca426839126f1be294a61e060168e7d4daf655dfd",
+    "include/linux/sched/ext.h": "d3a5aa39b5d2e7a700804d960b6caf7818322e6fe6cf30a3acd69d66015bcd76",
+    "include/linux/sched/task.h": "110e63d3264eacb63c10466eba2cbbc6f127295ab9ac8786b1c223a35d27ddbc",
+    "include/trace/hooks/sched.h": "16b953771e6498b3a04c6df1e806d03cd0d22085346109a676382d20fe9df31a",
+    "init/init_task.c": "14faa9af2da31609b9509fbf2b96eab8d62ff794ff8a33f317d4f85797a0e59b",
+    "kernel/Kconfig.preempt": "82ffef4be04a6e65064b2d73dd39e2d7efb2fc519690003bcb82e0e8b73d4e77",
+    "kernel/fork.c": "b20f996c11a18a833f62884d37e8a9300d270119ad5464e6be2000b5ea0f7566",
+    "kernel/sched/build_policy.c": "edf18d1574f25b8298e01cc1134d526011df82d8b86715fb2ad48b21fe323be8",
+    "kernel/sched/core.c": "5cd164d2e5a2d4b9503f520373451f3ed899cae92efdafb36c0d9937f8ea6a73",
+    "kernel/sched/debug.c": "a56cd8f8f914534b72afff1e3edc3398a06bf59aa939641696d6c3c7ba6c9866",
+    "kernel/sched/ext.c": "5ff3a436ec71a7aa326bacc60efa88e49c35d63247b984fa2a15d66c4f71ad20",
+    "kernel/sched/ext.h": "14fba6e754772ed059c489a58f4a4404fbd2d6dccffeb5766b308d6fc1f75ca3",
+    "kernel/sched/hmbird_export.c": "6b695567ca6d8dd38da1f11ee91c0d597434534c202a06cdbd6734f9efcefdf4",
+    "kernel/sched/idle.c": "1801757f3fde3eeb077b175f561916942b9f65e8bfb414be43e41ebbaad7d3bd",
+    "kernel/sched/sched.h": "67ff5aaae36e613eca42c97fb715212ad12acda26dbedcc51ab96d2b7bfb2a66",
+    "kernel/sched/slim.h": "2d18160bb0d491f53b58e04f692118cd8bb7849fb0afeed30afd72dc8759d988",
+    "kernel/sched/slim_sysctl.c": "f2b7357af895d5af6a2dfce40a1406c7e3caf01fbd601cef0b8a2b7f03164ec0",
+    "kernel/sched/vendor_hooks.c": "f900316ef11fea97448ca79eddeae6aff098ad643dbd6935eedea137d7887f87"
+  },
+  "port_changes": [
+    "Retain ACK 6.1.118 code while replacing the incompatible SLIM scheduler with the HMBIRD implementation.",
+    "Restore the stock SCX entity fields top_task_prop and dsq_sync_ux at their measured offsets.",
+    "Export the real isolation CPU masks and expose live scheduler counters through the vendor minidump API.",
+    "Zero-initialize task SCX allocations, including the restored vendor fields."
+  ]
+}

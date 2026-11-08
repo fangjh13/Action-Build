@@ -1,4 +1,4 @@
-name: Build OnePlus 12 OOS16.201 6.1.118 SUSFS KPM
+name: Build OnePlus 12 OOS16.201 6.1.118 HMBIRD SUSFS KPM
 on:
   workflow_dispatch:
     inputs:
@@ -131,17 +131,17 @@ on:
         type: boolean
         description: "是否启用关键分区写入保护模块(BBG)？//Enable critical partition write protection module (BBG)?"
         required: true
-        default: true
+        default: false
       NETFILTER:
         type: boolean
         description: "是否启用网络功能拓展(NETFILTER)？//Enable network feature extensions (NETFILTER)?"
         required: true
-        default: true
+        default: false
       CCM:
         type: boolean
         description: "是否启用网络拥塞控制与管理机制(BBRv1+BBRv3+ECN)？//Enable network congestion control and management mechanism (BBRv1+BBRv3+ECN)?"
         required: true
-        default: true
+        default: false
       UNICODE_BYPASS:
         type: boolean
         description: "是否添加Unicode不可见字码点绕过读取漏洞修复？//Add patch for Unicode invisible code point read bypass vulnerability?"
@@ -149,7 +149,7 @@ on:
         default: false
       SCHED_HMBIRD:
         type: boolean
-        description: "是否添加风驰驱动1.0？//Add Fengchi (HMBIRD) Driver 1.0?"
+        description: "保持 false，OP12 专用 HMBIRD 回移自动启用//Keep false; the pinned OP12 HMBIRD port is applied automatically"
         required: true
         default: false
       DROID_SPACES:
@@ -188,6 +188,8 @@ jobs:
       CCACHE_NOHARDLINK: "true"
       CCACHE_IS_KERNEL_COMPILING: "true"
       CCACHE_MAXSIZE: 5G
+      SUKISU_PATCH_REVISION: eec45788c9a115e5498040298133336d6b6071dd
+      ANYKERNEL_REVISION: 47f23f7ece3ef212a392ec9ea5466e5f0b55d3c7
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -200,12 +202,16 @@ jobs:
           SELECTED_KPM: ${{ github.event.inputs.KPM }}
           SELECTED_SUSFS: ${{ github.event.inputs.SUSFS_META }}
           SELECTED_KSU: ${{ github.event.inputs.KSU_META }}
+          SELECTED_GENERIC_HMBIRD: ${{ github.event.inputs.SCHED_HMBIRD }}
+          SELECTED_SUSFS_CI: ${{ github.event.inputs.SUSFS_CI }}
         run: |
           set -euo pipefail
           [[ "$SELECTED_FILE" == "oneplus_12_b" ]] || { echo 'This workflow is only for OnePlus 12 Android 16'; exit 1; }
           [[ "$SELECTED_FAST" == "true" ]] || { echo 'Keep FAST_BUILD enabled for this recipe'; exit 1; }
           [[ -z "$SELECTED_RESUBLEVEL" ]] || { echo 'Leave RESUBLEVEL empty; source version must be real'; exit 1; }
           [[ "$SELECTED_KPM" == "KPM" ]] || { echo 'Select KPM'; exit 1; }
+          [[ "$SELECTED_GENERIC_HMBIRD" == "false" ]] || { echo 'Keep SCHED_HMBIRD=false; the pinned OP12 HMBIRD port is applied automatically'; exit 1; }
+          [[ "$SELECTED_SUSFS_CI" == "N/A" ]] || { echo 'Keep SUSFS_CI=N/A; this recipe uses builtin SUSFS without the legacy userspace module'; exit 1; }
           [[ "$SELECTED_SUSFS" == "a2165b6f875b73e2f87d3c6f12814efac8de061d" ]] || { echo 'Keep the pinned SUSFS_META value for this recipe'; exit 1; }
           [[ "$SELECTED_KSU" == "main/builtin/OP12-61118/1cfa57340590971cba7521ed536da8ebbedc5f0a" ]] || { echo 'Keep the pinned KSU_META value for this recipe'; exit 1; }
 
@@ -220,37 +226,16 @@ jobs:
           REMOVE_CODEQL: 'true'
         run: bash scripts/maximize-build-space.sh
 
-      - name: Configure Git
+      - name: Prepare workflow support files from this checkout
         run: |
-          git config --global user.name "Numbersf"
-          git config --global user.email "263623064@qq.com"
-          mkdir kernel_workspace && cd kernel_workspace
+          set -euo pipefail
+          mkdir -p kernel_workspace/Action-Build build-audit
+          git archive --format=tar HEAD | tar -xf - -C kernel_workspace/Action-Build
+          git rev-parse HEAD > build-audit/workflow-commit.txt
+          test -s scripts/compat/op12-oos16.0.0.201.json
 
-          UPSTREAM_REPO="Numbersf/Action-Build"
-          UPSTREAM_BRANCH="SukiSU-Ultra"
-          SELF_REPO="${{ github.repository }}"
-          SELF_BRANCH="${{ github.ref_name }}"
-
-          USE_REPO="$UPSTREAM_REPO"
-          USE_BRANCH="$UPSTREAM_BRANCH"
-
-          if [ "${SELF_REPO,,}" != "${UPSTREAM_REPO,,}" ]; then
-            git clone --filter=blob:none --no-checkout "https://github.com/${SELF_REPO}.git" -b "$SELF_BRANCH" probe
-            cd probe
-            git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
-            git fetch --filter=blob:none upstream "$UPSTREAM_BRANCH"
-
-            AHEAD=$(git rev-list --no-merges --count "upstream/${UPSTREAM_BRANCH}..HEAD")
-            echo "fork 独有的非 Merge 提交数: $AHEAD"
-
-            if [ "$AHEAD" -gt 0 ]; then
-              USE_REPO="$SELF_REPO"
-              USE_BRANCH="$SELF_BRANCH"
-            fi
-            cd .. && rm -rf probe
-          fi
-          echo "使用仓库: $USE_REPO @ $USE_BRANCH"
-          git clone "https://github.com/${USE_REPO}.git" -b "$USE_BRANCH" Action-Build
+      - name: Test compatibility checker regression
+        run: python3 -m unittest discover -s tests -p 'test_op12_compat.py'
 
       - name: Extract Manifest Info
         id: extract_info
@@ -633,6 +618,14 @@ jobs:
             sed -i 's/if check_defconfig == None:/if False:  # check_defconfig == None:/' kernel_platform/build/kernel/kleaf/common_kernels.bzl
           fi
 
+      - name: Apply pinned OP12 HMBIRD compatibility port
+        run: |
+          set -euo pipefail
+          python3 scripts/apply_op12_hmbird.py \
+            kernel_workspace/kernel_platform/common \
+            --audit build-audit/hmbird-source.json
+          sha256sum patches/op12/6.1.118-hmbird-compat.patch >> SOURCE_LOCK_REPORT.txt
+
       - name: Kernel Version Handling
         run: |
           cd kernel_workspace/kernel_platform
@@ -792,6 +785,7 @@ jobs:
 
       - name: Add SukiSU Ultra
         run: |
+          set -euo pipefail
           cd kernel_workspace/kernel_platform
           KSU_META="${{ github.event.inputs.KSU_META }}"
 
@@ -808,7 +802,7 @@ jobs:
           [[ -n "$KSU_CUSTOM_TAG" ]] && echo "自定义版本标识: $KSU_CUSTOM_TAG" || echo "自定义版本标识: 未启用"
           [[ -n "$MANUAL_HASH" ]] && echo "手动指定 hash: $MANUAL_HASH" || echo "手动指定 hash: 未启用"
 
-          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/${KSU_MANAGER_BRANCH}/kernel/setup.sh" | bash -s "$KSU_BUILTIN_BRANCH"
+          curl -fLSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/${MANUAL_HASH}/kernel/setup.sh" | bash -s "$KSU_BUILTIN_BRANCH"
           cd ./KernelSU
 
           # 如果指定了手动 hash，就切换到该提交
@@ -818,8 +812,7 @@ jobs:
             SHORT_HASH=${MANUAL_HASH:0:8}
           fi
 
-          KSU_VERSION_TAG=$(curl -fsSL https://api.github.com/repos/SukiSU-Ultra/SukiSU-Ultra/releases/latest \
-            | grep '"tag_name":' | sed -E 's/.*"v?([^"]+)".*/\1/')
+          KSU_VERSION_TAG="4.3.0-r2"
           if [[ -z "$KSU_VERSION_TAG" || "$(printf '%s\n' "$KSU_VERSION_TAG" "3.1.7" | sort -V | head -n1)" != "3.1.7" ]]; then
             KSU_VERSION_TAG="3.1.7"
           fi
@@ -896,6 +889,9 @@ jobs:
             git clone https://github.com/Numbersf/lz4_oplus.git
           fi
           git clone https://github.com/ShirkNeko/SukiSU_patch.git
+          git -C SukiSU_patch fetch --depth=1 origin "$SUKISU_PATCH_REVISION"
+          git -C SukiSU_patch checkout --detach "$SUKISU_PATCH_REVISION"
+          git -C SukiSU_patch rev-parse HEAD > "$GITHUB_WORKSPACE/build-audit/sukisu-patch-commit.txt"
           cd kernel_platform
           if [ "${{ github.event.inputs.SUSFS_META }}" != "-1" ]; then
             echo "正在拉取susfs补丁"
@@ -1211,6 +1207,11 @@ jobs:
           set_config "CONFIG_KSU=y"
           set_config "CONFIG_IKCONFIG=y"
           set_config "CONFIG_IKCONFIG_PROC=y"
+          set_config "CONFIG_HMBIRD_SCHED=y"
+          set_config "CONFIG_MODVERSIONS=y"
+          set_config "CONFIG_DEBUG_INFO_BTF=y"
+          set_config "CONFIG_DEBUG_INFO_BTF_MODULES=y"
+          set_config "CONFIG_MODULE_ALLOW_BTF_MISMATCH=y"
 
           # KPM配置
           if [ "${{ github.event.inputs.KPM }}" = "KPM" ] || [ "${{ github.event.inputs.KPM }}" = "N/A" ]; then
@@ -1588,7 +1589,13 @@ jobs:
           fi
 
           make O=out "${MAKE_ARGS[@]}" olddefconfig --no-print-directory
-          grep -qx "CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=y" out/.config || { echo "SUSFS priority filter missing after olddefconfig"; exit 1; }
+          for option in CONFIG_KSU CONFIG_KSU_SUSFS CONFIG_KPM CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER CONFIG_HMBIRD_SCHED CONFIG_MODVERSIONS CONFIG_DEBUG_INFO_BTF CONFIG_DEBUG_INFO_BTF_MODULES CONFIG_MODULE_ALLOW_BTF_MISMATCH; do
+            grep -qx "$option=y" out/.config || { echo "Required configuration missing after olddefconfig: $option"; exit 1; }
+          done
+          if grep -Eq '^CONFIG_(SLIM_SCHED|SCHED_CLASS_EXT)=y$' out/.config; then
+            echo 'The incompatible SLIM scheduler must not be enabled'
+            exit 1
+          fi
           make -j"$(nproc --all)" O=out "${MAKE_ARGS[@]}"
           ccache -s
 
@@ -1606,7 +1613,11 @@ jobs:
 
       - name: Make AnyKernel3
         run: |
-          git clone https://github.com/Numbersf/AnyKernel3 --depth=1
+          git init AnyKernel3
+          git -C AnyKernel3 remote add origin https://github.com/Numbersf/AnyKernel3.git
+          git -C AnyKernel3 fetch --depth=1 origin "$ANYKERNEL_REVISION"
+          git -C AnyKernel3 checkout --detach "$ANYKERNEL_REVISION"
+          git -C AnyKernel3 rev-parse HEAD > build-audit/anykernel-commit.txt
           rm -rf ./AnyKernel3/.git
           mkdir -p kernel_workspace/kernel_platform/out/Final-Image-Find/
           image_path=""
@@ -1653,6 +1664,7 @@ jobs:
           cp Image "${GITHUB_WORKSPACE}/AnyKernel3/Image"
 
       - name: Verify final Image and pinned SukiSU
+        id: verify_final_image
         run: |
           set -euo pipefail
           actual_ksu=$(git -C kernel_workspace/kernel_platform/KernelSU rev-parse HEAD)
@@ -1661,6 +1673,8 @@ jobs:
           actual_susfs=$(git -C kernel_workspace/susfs4ksu rev-parse HEAD)
           [[ "$actual_susfs" == "a2165b6f875b73e2f87d3c6f12814efac8de061d" ]] || { echo "Wrong SUSFS commit: $actual_susfs"; exit 1; }
           printf 'SUSFS commit: %s\n' "$actual_susfs" >> SOURCE_LOCK_REPORT.txt
+          git -C kernel_workspace/kernel_platform/common diff --stat > build-audit/final-source-diff-stat.txt
+          git -C kernel_workspace/kernel_platform/common diff --binary > build-audit/final-source.diff
           python3 - <<'PY'
           #!/usr/bin/env python3
           """Inspect a final, uncompressed ARM64 Image; does not flash or execute it."""
@@ -1706,7 +1720,13 @@ jobs:
           print(json.dumps(report, indent=2))
           PY
 
+          python3 scripts/check_op12_kernel_compat.py \
+            --reference-json scripts/compat/op12-oos16.0.0.201.json \
+            --candidate AnyKernel3/Image \
+            --output build-audit/kernel-compatibility.json
+
       - name: Upload source and Image audit
+        if: ${{ always() && !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
           name: OP12_61118_Source_and_Image_Audit
@@ -1747,9 +1767,10 @@ jobs:
       - name: Set zip Suffix
         id: suffix
         run: |
-          echo "value=${{ env.ZRAM_ALGO_U && format('_{0}', env.ZRAM_ALGO_U) || '' }}${{ github.event.inputs.KPM == 'KPM' && '_KPM' || github.event.inputs.KPM == 'KPN' && '_KPN' || '' }}${{ github.event.inputs.LSM_BBG == 'true' && '_BBG' || '' }}_ILH${{ github.event.inputs.SCHED_HMBIRD== 'true' && '_HMBIRD' || '' }}${{ github.event.inputs.DROID_SPACES== 'true' && '_DS' || '' }}${{ github.event.inputs.RE_KERNEL == 'true' && '_REKER' || '' }}${{ github.event.inputs.LZ4_UPDATE == 'true' && '_LZ4UPD' || '' }}" >> $GITHUB_OUTPUT
+          echo "value=${{ env.ZRAM_ALGO_U && format('_{0}', env.ZRAM_ALGO_U) || '' }}${{ github.event.inputs.KPM == 'KPM' && '_KPM' || github.event.inputs.KPM == 'KPN' && '_KPN' || '' }}${{ github.event.inputs.LSM_BBG == 'true' && '_BBG' || '' }}_HMBIRD_ILH${{ github.event.inputs.SCHED_HMBIRD== 'true' && '_HMBIRD' || '' }}${{ github.event.inputs.DROID_SPACES== 'true' && '_DS' || '' }}${{ github.event.inputs.RE_KERNEL == 'true' && '_REKER' || '' }}${{ github.event.inputs.LZ4_UPDATE == 'true' && '_LZ4UPD' || '' }}" >> $GITHUB_OUTPUT
 
       - name: Upload AnyKernel3
+        if: ${{ success() && steps.verify_final_image.outcome == 'success' }}
         uses: actions/upload-artifact@v7
         with:
           name: AnyKernel3_SukiSUUltra_${{ env.KSUVER }}_${{ steps.extract_info.outputs.value }}(${{ env.CKERNEL_VERSION }})${{ steps.suffix.outputs.value }}
