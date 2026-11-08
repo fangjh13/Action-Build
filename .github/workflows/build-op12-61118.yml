@@ -193,6 +193,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
 
       - name: Enforce pinned OP12 build inputs
         env:
@@ -226,12 +228,22 @@ jobs:
           REMOVE_CODEQL: 'true'
         run: bash scripts/maximize-build-space.sh
 
+      # The build-space mount hides the initial checkout, including its .git directory.
+      - name: Restore checkout after build-space mount
+        if: ${{ github.event.inputs.SPACE_NOCLEAN == 'false' }}
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+
       - name: Prepare workflow support files from this checkout
         run: |
           set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+          actual_commit="$(git rev-parse --verify HEAD)"
+          [[ "$actual_commit" == "$GITHUB_SHA" ]] || { echo 'Checkout does not match the triggering workflow commit'; exit 1; }
           mkdir -p kernel_workspace/Action-Build build-audit
-          git archive --format=tar HEAD | tar -xf - -C kernel_workspace/Action-Build
-          git rev-parse HEAD > build-audit/workflow-commit.txt
+          git archive --format=tar "$actual_commit" | tar -xf - -C kernel_workspace/Action-Build
+          printf '%s\n' "$actual_commit" > build-audit/workflow-commit.txt
           test -s scripts/compat/op12-oos16.0.0.201.json
 
       - name: Test compatibility checker regression

@@ -41,6 +41,13 @@ scx_get_md_info 返回本实现的实时调度统计区，用于厂商 minidump 
 不要只上传一个 yml：工作流会使用同一次 checkout 中的脚本、补丁和原厂兼容性基准。
 不再重新拉取 fork 的最新分支来取得这些辅助文件，避免运行提交与辅助脚本不一致。
 
+SPACE_NOCLEAN=false 时，空间清理脚本会把新卷挂载到整个 GITHUB_WORKSPACE，
+遮住首次 checkout 的全部文件。工作流在挂载后按 github.sha 再次 checkout，
+确认 HEAD 与本次运行提交一致后，才归档辅助文件并记录 workflow-commit.txt。
+SPACE_NOCLEAN=true 时跳过挂载及第二次 checkout，直接使用首次 checkout。
+修改并推送 workflow 后应通过 Run workflow 发起新运行；旧运行的 Re-run jobs
+仍使用旧的提交与工作流，不会带上这次修复。
+
 检查与阻断规则
 
 1. 源码固定提交必须一致，两个源码 Makefile 必须真实为 6.1.118，KMI 代次必须为 11。
