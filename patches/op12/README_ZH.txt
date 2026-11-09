@@ -37,6 +37,7 @@ scx_get_md_info 返回本实现的实时调度统计区，用于厂商 minidump 
   patches/op12/README_ZH.txt
   tests/test_op12_compat.py
   tests/fixtures/op12-incompatible-slim.json
+  tests/fixtures/op12-incomplete-kpm.json
 
 不要只上传一个 yml：工作流会使用同一次 checkout 中的脚本、补丁和原厂兼容性基准。
 不再重新拉取 fork 的最新分支来取得这些辅助文件，避免运行提交与辅助脚本不一致。
@@ -57,6 +58,8 @@ SPACE_NOCLEAN=true 时跳过挂载及第二次 checkout，直接使用首次 che
 3. olddefconfig 后确认内置 SukiSU / SUSFS / KPM、HMBIRD、MODVERSIONS、BTF 及
    BTF_MODULES 等关键配置保留。SLIM_SCHED / SCHED_CLASS_EXT 不允许启用。
 4. KPM 后处理之后检查最终 AnyKernel3/Image：
+   - ARM64 入口必须跳到镜像文件中真实存在的代码，禁止跳到文件末尾之外；
+   - KPM 工具必须识别为 patched=true、arch=arm64、config=android,release；
    - release 必须仍属 6.1.118-android14；
    - 必须有真实嵌入配置；
    - 8079 个原厂导出不能缺失，CRC 不能改变；新增导出允许；
@@ -68,6 +71,17 @@ SPACE_NOCLEAN=true 时跳过挂载及第二次 checkout，直接使用首次 che
 原厂兼容性 JSON 是从当前可启动 boot_a 导出的内核提取的公开接口元数据，
 包括原厂 Image SHA256、导出 CRC 和选定结构布局，不包含设备镜像、驱动二进制或日志。
 无需将 diagnostics/ 上传到 Git。
+
+2026-11-09 产物检查发现的 KPM 问题
+
+此前构建成功的 ZIP（SHA256 为
+d7275ac309e03c48a33a210ffe0424fcdd8ce453840c6f2025c3cb94428ef8f2）不能刷入。
+它的 Image 虽通过配置与 ABI 检查，但入口跳转到 0x225d000，文件仅有 0x225c090 字节；
+同版本 kptools 检查结果为 patched=false。
+已在隔离容器中复现：固定提交的 patch_linux 包装器仅传入 16 字节 KPM 载荷，
+仍返回成功。工作流改为使用同一提交的 kptools-linux 与完整 kpimg 显式打补丁，
+并保存 kpm-patch.log、kpm-info.txt 和 kpm-assets.sha256 后检查载荷及入口。
+此修复需要重新运行 Actions 构建；旧 ZIP 不会因此自动修复。
 
 建议构建输入
 

@@ -1,0 +1,10 @@
+{
+  "scope": "Header and length captured from the CI artifact with an incomplete KPM payload; no kernel binary is included.",
+  "zip_sha256": "d7275ac309e03c48a33a210ffe0424fcdd8ce453840c6f2025c3cb94428ef8f2",
+  "image_sha256": "6b906b687060201a5eb5470bacdbbae3844428377674a5091d97187c03c78544",
+  "file_size": 36028560,
+  "header_hex": "4d5a40faff738914000000000000000000106502000000000a0000000000000000000000000000000000000000000000000000000000000041524d6440000000",
+  "entry_offset": 4,
+  "entry_target": 36032512,
+  "kptools_patched": false
+}

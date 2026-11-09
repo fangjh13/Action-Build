@@ -1658,15 +1658,25 @@ jobs:
       - name: Apply KPX and Replace Image
         if: ${{ github.event.inputs.KPM != 'N/A' }}
         run: |
+          set -euo pipefail
           KPM_DIR="${GITHUB_WORKSPACE}/kernel_workspace/SukiSU_patch/kpm"
           # KPM_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches/kpm"
           KPN_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches/kpn"
           OUT_DIR="${GITHUB_WORKSPACE}/kernel_workspace/kernel_platform/out/Final-Image-Find"
+          AUDIT_DIR="${GITHUB_WORKSPACE}/build-audit"
+          mkdir -p "$AUDIT_DIR"
           cd "${OUT_DIR}"
           if [ "${{ github.event.inputs.KPM }}" = "KPM" ]; then
-            cp "${KPM_DIR}/patch_linux" .
-            chmod +x patch_linux
-            ./patch_linux
+            # The pinned wrapper emits a 16-byte payload while returning success.
+            # Use the matching explicit tool and full payload from the same commit.
+            cp "${KPM_DIR}/kptools-linux" "${KPM_DIR}/kpimg" .
+            chmod +x kptools-linux
+            sha256sum kptools-linux kpimg > "$AUDIT_DIR/kpm-assets.sha256"
+            ./kptools-linux -p -i ./Image -k ./kpimg -o ./oImage 2>&1 | tee "$AUDIT_DIR/kpm-patch.log"
+            ./kptools-linux -l -i ./oImage 2>&1 | tee "$AUDIT_DIR/kpm-info.txt"
+            grep -qx 'patched=true' "$AUDIT_DIR/kpm-info.txt" || { echo 'Final Image has no valid KPM payload'; exit 1; }
+            grep -qx 'arch=arm64' "$AUDIT_DIR/kpm-info.txt" || { echo 'KPM payload is not arm64'; exit 1; }
+            grep -qx 'config=android,release' "$AUDIT_DIR/kpm-info.txt" || { echo 'Unexpected KPM payload configuration'; exit 1; }
           else
             cp "${KPN_DIR}/kptools-linux" "${KPN_DIR}/kpimg-linux" .
             chmod +x ./kptools-linux
@@ -1679,6 +1689,9 @@ jobs:
         id: verify_final_image
         run: |
           set -euo pipefail
+          if [[ "${{ github.event.inputs.KPM }}" == "KPM" ]]; then
+            grep -qx 'patched=true' build-audit/kpm-info.txt || { echo 'KPM payload verification did not pass'; exit 1; }
+          fi
           actual_ksu=$(git -C kernel_workspace/kernel_platform/KernelSU rev-parse HEAD)
           [[ "$actual_ksu" == "1cfa57340590971cba7521ed536da8ebbedc5f0a" ]] || { echo "Wrong SukiSU commit: $actual_ksu"; exit 1; }
           printf '\nSukiSU builtin commit: %s\n' "$actual_ksu" >> SOURCE_LOCK_REPORT.txt

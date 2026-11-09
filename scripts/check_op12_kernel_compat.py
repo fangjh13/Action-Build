@@ -44,7 +44,30 @@ def read_image(path):
         data = data[4096 : 4096 + size]
     if data[56:60] != b"ARM\x64":
         raise ValueError("Expected an uncompressed arm64 Linux Image")
+    validate_arm64_entry(data)
     return data
+
+
+def validate_arm64_entry(data):
+    """Check that the OP12 Image entry branches to code present in the file."""
+    if len(data) < 64:
+        raise ValueError("Truncated arm64 Image header")
+    offset = 4 if data.startswith(b"MZ") else 0
+    instruction = struct.unpack_from("<I", data, offset)[0]
+    if instruction & 0xFC000000 != 0x14000000:
+        raise ValueError("Expected an arm64 entry branch instruction")
+    displacement = instruction & 0x03FFFFFF
+    if displacement & 0x02000000:
+        displacement -= 0x04000000
+    target = offset + displacement * 4
+    # image_size includes BSS and may exceed file size. The initial entry stub
+    # must nevertheless exist in the file before any runtime relocation occurs.
+    if not 64 <= target <= len(data) - 4:
+        raise ValueError(
+            f"arm64 entry target 0x{target:x} is outside loaded file code "
+            f"(file size 0x{len(data):x})"
+        )
+    return {"instruction_offset": offset, "target_offset": target}
 
 
 def read_kernel_metadata(data):
@@ -420,6 +443,7 @@ def main():
         "candidate_sha256": hashlib.sha256(candidate).hexdigest(),
         "reference_kernel_release": reference["kernel_release"],
         "candidate_kernel_release": release,
+        "arm64_entry": validate_arm64_entry(candidate),
         "version_matches": version_matches,
         "missing_config": missing_config,
         "reference_export_count": len(stock_exports),

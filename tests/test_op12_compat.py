@@ -3,6 +3,8 @@
 import copy
 import importlib.util
 import json
+import struct
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -12,6 +14,53 @@ SPEC = importlib.util.spec_from_file_location(
 )
 compat = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(compat)
+
+
+class OP12ImageEntryTests(unittest.TestCase):
+    def read_image(self, data):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "Image"
+            path.write_bytes(data)
+            return compat.read_image(path)
+
+    def make_image(self, instruction=0x1400000F, efi=True):
+        data = bytearray(128)
+        data[56:60] = b"ARM\x64"
+        struct.pack_into("<Q", data, 16, 4096)
+        if efi:
+            data[:4] = b"MZ\x40\xfa"
+        struct.pack_into("<I", data, 4 if efi else 0, instruction)
+        return data
+
+    def test_actual_broken_kpm_entry_is_rejected(self):
+        fixture = json.loads(
+            (ROOT / "tests/fixtures/op12-incomplete-kpm.json").read_text()
+        )
+        data = bytearray(fixture["file_size"])
+        header = bytes.fromhex(fixture["header_hex"])
+        data[: len(header)] = header
+        with self.assertRaisesRegex(ValueError, "entry.*outside"):
+            self.read_image(data)
+
+    def test_valid_efi_entry_with_bss_beyond_file_is_allowed(self):
+        data = self.make_image()
+        self.assertEqual(self.read_image(data), data)
+
+    def test_valid_non_efi_entry_is_allowed(self):
+        data = self.make_image(instruction=0x14000010, efi=False)
+        self.assertEqual(self.read_image(data), data)
+
+    def test_negative_entry_target_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "entry.*outside"):
+            self.read_image(self.make_image(instruction=0x17FFFFFE))
+
+    def test_entry_into_header_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "entry.*outside"):
+            self.read_image(self.make_image(instruction=0x14000000))
+
+    def test_non_branch_entry_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "entry.*branch"):
+            self.read_image(self.make_image(instruction=0xD503201F))
 
 
 class OP12CompatibilityTests(unittest.TestCase):
